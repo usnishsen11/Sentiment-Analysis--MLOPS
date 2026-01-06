@@ -11,53 +11,83 @@ permissions:
   contents: read
 
 jobs:
+  # ===============================
+  # CONTINUOUS INTEGRATION
+  # ===============================
   integration:
     name: Continuous Integration
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - run: echo "Linting"
-      - run: echo "Testing"
 
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Lint
+        run: echo "Linting repository"
+
+      - name: Unit tests
+        run: echo "Running unit tests"
+
+  # ===============================
+  # CONTINUOUS DELIVERY (BUILD + PUSH)
+  # ===============================
   build-and-push:
     name: Continuous Delivery
     needs: integration
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
 
-      - uses: aws-actions/configure-aws-credentials@v1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@v1
+      - name: Login to Amazon ECR
         id: login
+        uses: aws-actions/amazon-ecr-login@v1
 
-      - run: docker build -t ${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest .
-      - run: docker push ${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+      - name: Build Docker image
+        run: docker build -t ${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest .
 
+      - name: Push Docker image
+        run: docker push ${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+
+  # ===============================
+  # CONTINUOUS DEPLOYMENT (EC2 SELF-HOSTED)
+  # ===============================
   deploy:
     name: Continuous Deployment
     needs: build-and-push
     runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v3
 
-      - uses: aws-actions/configure-aws-credentials@v1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@v1
+      - name: Login to Amazon ECR
         id: login
+        uses: aws-actions/amazon-ecr-login@v1
 
-      - run: docker pull ${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+      - name: Pull latest image
+        run: docker pull ${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
 
-      - run: docker ps -q --filter "name=cnncls" | grep -q . && docker stop cnncls && docker rm -fv cnncls || true
+      - name: Stop and remove existing container if running
+        run: docker ps -q --filter "name=cnncls" | grep -q . && docker stop cnncls && docker rm -fv cnncls || true
 
-      - run: docker run -d -p 8080:8080 --name cnncls ${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+      - name: Run Docker container
+        run: docker run -d -p 8080:8080 --name cnncls ${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
 
-      - run: docker system prune -f
+      - name: Cleanup Docker
+        run: docker system prune -f
